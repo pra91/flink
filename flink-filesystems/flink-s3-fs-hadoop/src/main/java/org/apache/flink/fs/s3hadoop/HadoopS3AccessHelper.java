@@ -50,6 +50,9 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
 
     private final InternalWriteOperationHelper s3accessHelper;
 
+    /** Cached S3 client to ensure consistency across multipart upload operations. */
+    private volatile software.amazon.awssdk.services.s3.S3Client cachedS3Client;
+
     public HadoopS3AccessHelper(S3AFileSystem s3a, Configuration conf) {
         checkNotNull(s3a);
         // Create WriteOperationHelper with minimal callbacks for Hadoop 3.4.2
@@ -128,12 +131,23 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
     /**
      * Gets the S3 client from the S3AFileSystem's internals to ensure consistency. This allows us
      * to perform S3 operations in callbacks using the same client that initiated the multipart
-     * upload.
+     * upload. Uses a cached client to ensure the same instance is used throughout the upload
+     * lifecycle.
      */
     private software.amazon.awssdk.services.s3.S3Client getS3ClientFromFileSystem() {
-        // Create S3 client with the same configuration as the S3AFileSystem
-        // This ensures consistency without reflection or accessing private internals
-        return createS3Client();
+        // Use double-checked locking for thread-safe lazy initialization
+        software.amazon.awssdk.services.s3.S3Client client = cachedS3Client;
+        if (client == null) {
+            synchronized (this) {
+                client = cachedS3Client;
+                if (client == null) {
+                    // Create S3 client with the same configuration as the S3AFileSystem
+                    // This ensures consistency and reuses the same client instance
+                    cachedS3Client = client = createS3Client();
+                }
+            }
+        }
+        return client;
     }
 
     /**
@@ -394,6 +408,30 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
             throw S3AUtils.translateException("getObjectMetadata", key, e);
         } catch (Exception e) {
             throw new IOException("Failed to get object metadata for key: " + key, e);
+        }
+    }
+
+    /**
+     * Closes the cached S3 client to free up resources. Should be called when this helper is no
+     * longer needed.
+     */
+    public void close() {
+        software.amazon.awssdk.services.s3.S3Client client = cachedS3Client;
+        if (client != null) {
+            synchronized (this) {
+                client = cachedS3Client;
+                if (client != null) {
+                    try {
+                        client.close();
+                    } catch (Exception e) {
+                        // Log the error but don't throw - cleanup should be best effort
+                        System.err.println(
+                                "Warning: Failed to close cached S3 client: " + e.getMessage());
+                    } finally {
+                        cachedS3Client = null;
+                    }
+                }
+            }
         }
     }
 
