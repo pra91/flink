@@ -21,6 +21,8 @@ package org.apache.flink.fs.s3hadoop;
 import com.amazonaws.services.s3.model.CompleteMultipartUploadResult;
 import com.amazonaws.services.s3.model.PutObjectResult;
 import com.amazonaws.services.s3.model.UploadPartResult;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.s3a.S3AFileSystem;
 import org.apache.hadoop.fs.s3a.WriteOperationHelper;
 import org.apache.hadoop.fs.s3a.impl.PutObjectOptions;
 import org.junit.Test;
@@ -29,6 +31,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.RequestCharged;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 
 import static org.junit.Assert.assertEquals;
@@ -57,8 +60,8 @@ public class HadoopS3AccessHelperTest {
     }
 
     @Test
-    public void testCreateDefaultCallbacksThrowsExceptionOnUploadPart() throws Exception {
-        // Get the callbacks to test exception throwing
+    public void testCallbacksImplementS3UploadPart() throws Exception {
+        // Get the callbacks to test that they implement real S3 operations
         WriteOperationHelper.WriteOperationHelperCallbacks callbacks = getDefaultCallbacks();
 
         // Test that uploadPart callback throws UnsupportedOperationException
@@ -69,30 +72,60 @@ public class HadoopS3AccessHelperTest {
 
         try {
             callbacks.uploadPart(request, body, null);
-            fail("Expected UnsupportedOperationException");
-        } catch (UnsupportedOperationException e) {
-            assertTrue(e.getMessage().contains("Direct uploadPart callback is not supported"));
+            fail("Should throw exception due to missing AWS credentials/connectivity, not succeed");
+        } catch (RuntimeException e) {
+            // Expected: Should be AWS connectivity/credential error, NOT
+            // UnsupportedOperationException
+            assertFalse(
+                    "Should not throw UnsupportedOperationException - callbacks are implemented",
+                    e instanceof UnsupportedOperationException);
+            assertTrue(
+                    "Should be AWS-related error indicating real S3 operation was attempted",
+                    e.getMessage().toLowerCase().contains("s3")
+                            || e.getMessage().toLowerCase().contains("aws")
+                            || e.getMessage().toLowerCase().contains("credentials")
+                            || e.getMessage().toLowerCase().contains("unable to execute")
+                            || e.getMessage().toLowerCase().contains("configuration"));
         }
     }
 
     @Test
-    public void testCreateDefaultCallbacksThrowsExceptionOnCompleteMultipartUpload()
-            throws Exception {
-        // Get the callbacks to test exception throwing
+    public void testCallbacksImplementCompleteMultipartUpload() throws Exception {
+        // Get the callbacks to test that they implement real S3 operations
         WriteOperationHelper.WriteOperationHelperCallbacks callbacks = getDefaultCallbacks();
 
-        // Test that completeMultipartUpload callback throws UnsupportedOperationException
+        // Test that completeMultipartUpload callback attempts real S3 operation
         software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest request =
                 software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest.builder()
+                        .bucket("test-bucket")
+                        .key("test-key")
+                        .uploadId("test-upload-id")
+                        .multipartUpload(
+                                m ->
+                                        m.parts(
+                                                software.amazon.awssdk.services.s3.model
+                                                        .CompletedPart.builder()
+                                                        .partNumber(1)
+                                                        .eTag("test-etag")
+                                                        .build()))
                         .build();
 
         try {
             callbacks.completeMultipartUpload(request);
-            fail("Expected UnsupportedOperationException");
-        } catch (UnsupportedOperationException e) {
+            fail("Should throw exception due to missing AWS credentials/connectivity, not succeed");
+        } catch (RuntimeException e) {
+            // Expected: Should be AWS connectivity/credential error, NOT
+            // UnsupportedOperationException
+            assertFalse(
+                    "Should not throw UnsupportedOperationException - callbacks are implemented",
+                    e instanceof UnsupportedOperationException);
             assertTrue(
-                    e.getMessage()
-                            .contains("Direct completeMultipartUpload callback is not supported"));
+                    "Should be AWS-related error indicating real S3 operation was attempted",
+                    e.getMessage().toLowerCase().contains("s3")
+                            || e.getMessage().toLowerCase().contains("aws")
+                            || e.getMessage().toLowerCase().contains("credentials")
+                            || e.getMessage().toLowerCase().contains("unable to execute")
+                            || e.getMessage().toLowerCase().contains("configuration"));
         }
     }
 
@@ -209,11 +242,21 @@ public class HadoopS3AccessHelperTest {
 
     private WriteOperationHelper.WriteOperationHelperCallbacks getDefaultCallbacks()
             throws Exception {
+        // Create a mock S3AFileSystem for testing
+        S3AFileSystem mockS3a = createMockS3AFileSystem();
+        Configuration conf = new Configuration();
+        HadoopS3AccessHelper helper = new HadoopS3AccessHelper(mockS3a, conf);
+
         Method createCallbacksMethod =
-                HadoopS3AccessHelper.class.getDeclaredMethod("createDefaultCallbacks");
+                HadoopS3AccessHelper.class.getDeclaredMethod("createCallbacks");
         createCallbacksMethod.setAccessible(true);
         return (WriteOperationHelper.WriteOperationHelperCallbacks)
-                createCallbacksMethod.invoke(null);
+                createCallbacksMethod.invoke(helper);
+    }
+
+    private S3AFileSystem createMockS3AFileSystem() throws IOException {
+        // Create a minimal mock for testing
+        return new S3AFileSystem();
     }
 
     private UploadPartResult convertUploadPartResponse(
