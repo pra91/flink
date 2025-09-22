@@ -313,8 +313,6 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
             // This field name may vary between Hadoop versions, so we try multiple approaches
 
             Class<?> s3aClass = s3a.getClass();
-            System.err.println(
-                    "DEBUG: Attempting to extract S3 client from class: " + s3aClass.getName());
 
             // Common field names in different Hadoop versions
             String[] possibleFieldNames = {
@@ -329,35 +327,13 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
                     java.lang.reflect.Field clientField = s3aClass.getDeclaredField(fieldName);
                     clientField.setAccessible(true);
                     Object clientObj = clientField.get(s3a);
-                    System.err.println(
-                            "DEBUG: Found field '"
-                                    + fieldName
-                                    + "' with object: "
-                                    + (clientObj != null
-                                            ? clientObj.getClass().getName()
-                                            : "null"));
-
                     if (clientObj instanceof software.amazon.awssdk.services.s3.S3Client) {
-                        System.err.println(
-                                "DEBUG: Successfully extracted S3 client via field: " + fieldName);
                         return (software.amazon.awssdk.services.s3.S3Client) clientObj;
                     }
-                } catch (NoSuchFieldException e) {
-                    System.err.println("DEBUG: Field '" + fieldName + "' not found");
-                    continue;
-                } catch (IllegalAccessException e) {
-                    System.err.println(
-                            "DEBUG: Cannot access field '" + fieldName + "': " + e.getMessage());
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    // Try next field name
                     continue;
                 }
-            }
-
-            // List all available fields for debugging
-            java.lang.reflect.Field[] allFields = s3aClass.getDeclaredFields();
-            System.err.println("DEBUG: Available fields in S3AFileSystem:");
-            for (java.lang.reflect.Field field : allFields) {
-                System.err.println(
-                        "  - " + field.getName() + " (" + field.getType().getName() + ")");
             }
 
             // Fallback: Try to access via a getter method
@@ -366,16 +342,12 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
                         s3aClass.getDeclaredMethod("getAmazonS3Client");
                 getS3ClientMethod.setAccessible(true);
                 Object clientObj = getS3ClientMethod.invoke(s3a);
-                System.err.println(
-                        "DEBUG: Method getAmazonS3Client() returned: "
-                                + (clientObj != null ? clientObj.getClass().getName() : "null"));
 
                 if (clientObj instanceof software.amazon.awssdk.services.s3.S3Client) {
-                    System.err.println("DEBUG: Successfully extracted S3 client via method");
                     return (software.amazon.awssdk.services.s3.S3Client) clientObj;
                 }
             } catch (Exception e) {
-                System.err.println("DEBUG: Method fallback failed: " + e.getMessage());
+                // Fallback failed too
             }
 
             throw new RuntimeException(
@@ -385,9 +357,6 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
                             + java.util.Arrays.toString(possibleFieldNames));
 
         } catch (Exception e) {
-            System.err.println(
-                    "DEBUG: Critical failure in extractS3ClientFromS3AFileSystem: "
-                            + e.getMessage());
             throw new RuntimeException(
                     "Failed to extract S3 client from S3AFileSystem: " + e.getMessage(), e);
         }
