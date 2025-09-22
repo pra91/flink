@@ -548,33 +548,27 @@ public class HadoopS3AccessHelperTest {
         // Since HadoopS3AccessHelper requires S3AFileSystem, and mocking is complex,
         // we test that the fix exists by verifying the cached S3 client field is present
 
-        // Verify that the factory-based approach is used instead of instance caching
+        // Verify that we now use S3AFileSystem's internal client via reflection
         try {
             HadoopS3AccessHelper.class.getDeclaredField("cachedS3Client");
-            fail("HadoopS3AccessHelper should NOT have cachedS3Client field with factory approach");
-        } catch (NoSuchFieldException expected) {
-            // This is expected - the factory approach doesn't use instance caching
+            // This field should exist - it caches S3AFileSystem's internal client
+        } catch (NoSuchFieldException e) {
+            fail("HadoopS3AccessHelper should have cachedS3Client field for reflection approach");
         }
 
-        // Verify the S3ClientConfigurationFactory class exists for the shared approach
+        // Verify that we have the reflection-based S3 client extraction method
         try {
-            Class<?> factoryClass =
-                    Class.forName("org.apache.flink.fs.s3hadoop.S3ClientConfigurationFactory");
-            assertTrue("S3ClientConfigurationFactory should exist", factoryClass != null);
-
-            // Verify the factory has the acquireS3Client method
-            Method acquireS3ClientMethod =
-                    factoryClass.getDeclaredMethod(
-                            "acquireS3Client", org.apache.hadoop.fs.s3a.S3AFileSystem.class);
-            assertTrue("Factory should have acquireS3Client method", acquireS3ClientMethod != null);
+            java.lang.reflect.Method extractMethod =
+                    HadoopS3AccessHelper.class.getDeclaredMethod(
+                            "extractS3ClientFromS3AFileSystem");
             assertTrue(
-                    "acquireS3Client should be static",
-                    java.lang.reflect.Modifier.isStatic(acquireS3ClientMethod.getModifiers()));
+                    "extractS3ClientFromS3AFileSystem should be private",
+                    java.lang.reflect.Modifier.isPrivate(extractMethod.getModifiers()));
 
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
-            throw new AssertionError(
-                    "S3ClientConfigurationFactory should exist with acquireS3Client method for shared approach",
-                    e);
+        } catch (NoSuchMethodException e) {
+            fail(
+                    "HadoopS3AccessHelper should have extractS3ClientFromS3AFileSystem method: "
+                            + e.getMessage());
         }
 
         // Verify the getS3ClientFromFileSystem method exists
