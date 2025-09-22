@@ -35,6 +35,9 @@ import org.apache.hadoop.fs.statistics.DurationTrackerFactory;
 import org.apache.hadoop.fs.store.audit.AuditSpan;
 import org.apache.hadoop.fs.store.audit.AuditSpanSource;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -56,6 +59,7 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
 
     public HadoopS3AccessHelper(S3AFileSystem s3a, Configuration conf) {
         checkNotNull(s3a);
+        this.s3a = s3a;
         this.s3accessHelper =
                 new InternalWriteOperationHelper(
                         s3a,
@@ -63,8 +67,7 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
                         s3a.createStoreContext().getInstrumentation(),
                         s3a.getAuditSpanSource(),
                         s3a.getActiveAuditSpan(),
-                        new MinimalWriteOperationHelperCallbacks());
-        this.s3a = s3a;
+                        new S3AccessHelperCallbacks());
     }
 
     @Override
@@ -85,16 +88,83 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
     public UploadPartResult uploadPart(
             String key, String uploadId, int partNumber, File inputFile, long length)
             throws IOException {
-        // TODO: Implement Hadoop 3.4.2 uploadPart with AWS SDK v2 types
-        throw new UnsupportedOperationException(
-                "uploadPart method needs implementation for Hadoop 3.4.2 API changes");
+        try {
+            // Create AWS SDK v2 UploadPartRequest
+            software.amazon.awssdk.services.s3.model.UploadPartRequest request =
+                    software.amazon.awssdk.services.s3.model.UploadPartRequest.builder()
+                            .bucket(s3a.getBucket())
+                            .key(key)
+                            .uploadId(uploadId)
+                            .partNumber(partNumber)
+                            .contentLength(length)
+                            .build();
+
+            // Create RequestBody from file
+            RequestBody requestBody = RequestBody.fromFile(inputFile);
+
+            // Use our callback to perform the upload via Hadoop's WriteOperationHelper
+            software.amazon.awssdk.services.s3.model.UploadPartResponse response =
+                    s3accessHelper.uploadPart(
+                            request, requestBody, s3a.createStoreContext().getInstrumentation());
+
+            // Convert AWS SDK v2 response to AWS SDK v1 response for interface compatibility
+            UploadPartResult result = new UploadPartResult();
+            result.setPartNumber(partNumber); // Use the original part number
+            result.setETag(response.eTag());
+            return result;
+
+        } catch (Exception e) {
+            throw new IOException("Failed to upload part " + partNumber + " for key " + key, e);
+        }
     }
 
     @Override
     public PutObjectResult putObject(String key, File inputFile) throws IOException {
-        // TODO: Implement Hadoop 3.4.2 putObject with new signatures
-        throw new UnsupportedOperationException(
-                "putObject method needs implementation for Hadoop 3.4.2 API changes");
+        try {
+            // Create minimal PutObjectOptions
+            PutObjectOptions putOptions =
+                    new PutObjectOptions(
+                            false, // multipartUpload
+                            null, // storageClass
+                            Collections.emptyMap(), // headers
+                            EnumSet.noneOf(WriteObjectFlags.class), // flags
+                            null // customUserAgent
+                            );
+
+            // Create AWS SDK v2 PutObjectRequest
+            software.amazon.awssdk.services.s3.model.PutObjectRequest request =
+                    software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+                            .bucket(s3a.getBucket())
+                            .key(key)
+                            .contentLength(inputFile.length())
+                            .build();
+
+            // Alternative approach: Use S3AFileSystem's create() method to write the file
+            // This is simpler and doesn't require dealing with internal DataBlock classes
+            org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path("/" + key);
+
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(inputFile);
+                    org.apache.hadoop.fs.FSDataOutputStream outputStream = s3a.create(hadoopPath)) {
+
+                // Copy file content to S3
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    outputStream.write(buffer, 0, bytesRead);
+                }
+            }
+
+            // Get the object metadata to retrieve the ETag
+            HeadObjectResponse headResponse = s3a.getObjectMetadata(hadoopPath);
+
+            // Convert AWS SDK v2 response to AWS SDK v1 response for interface compatibility
+            PutObjectResult result = new PutObjectResult();
+            result.setETag(headResponse.eTag());
+            return result;
+
+        } catch (Exception e) {
+            throw new IOException("Failed to put object for key " + key, e);
+        }
     }
 
     @Override
@@ -105,9 +175,44 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
             long length,
             AtomicInteger errorCount)
             throws IOException {
-        // TODO: Implement Hadoop 3.4.2 completeMPUwithRetries with CompletedPart conversion
-        throw new UnsupportedOperationException(
-                "commitMultiPartUpload method needs implementation for Hadoop 3.4.2 API changes");
+        try {
+            // Convert AWS SDK v1 PartETag list to AWS SDK v2 CompletedPart list
+            List<CompletedPart> completedParts =
+                    partETags.stream()
+                            .map(
+                                    partETag ->
+                                            CompletedPart.builder()
+                                                    .partNumber(partETag.getPartNumber())
+                                                    .eTag(partETag.getETag())
+                                                    .build())
+                            .collect(java.util.stream.Collectors.toList());
+
+            // Create minimal PutObjectOptions
+            PutObjectOptions putOptions =
+                    new PutObjectOptions(
+                            false, // multipartUpload
+                            null, // storageClass
+                            Collections.emptyMap(), // headers
+                            EnumSet.noneOf(WriteObjectFlags.class), // flags
+                            null // customUserAgent
+                            );
+
+            // Use WriteOperationHelper to complete the multipart upload
+            software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse response =
+                    s3accessHelper.completeMPUwithRetries(
+                            destKey, uploadId, completedParts, length, errorCount, putOptions);
+
+            // Convert AWS SDK v2 response to AWS SDK v1 response for interface compatibility
+            CompleteMultipartUploadResult result = new CompleteMultipartUploadResult();
+            result.setBucketName(s3a.getBucket());
+            result.setKey(destKey);
+            result.setETag(response.eTag());
+            result.setLocation(response.location());
+            return result;
+
+        } catch (Exception e) {
+            throw new IOException("Failed to complete multipart upload for key " + destKey, e);
+        }
     }
 
     @Override
@@ -145,36 +250,99 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
 
     @Override
     public ObjectMetadata getObjectMetadata(String key) throws IOException {
-        // TODO: Implement Hadoop 3.4.2 getObjectMetadata with HeadObjectResponse conversion
-        throw new UnsupportedOperationException(
-                "getObjectMetadata method needs implementation for Hadoop 3.4.2 API changes");
+        try {
+            // Use S3AFileSystem to get the head object response (Hadoop 3.4.2 returns
+            // HeadObjectResponse)
+            HeadObjectResponse headResponse =
+                    s3a.getObjectMetadata(new org.apache.hadoop.fs.Path("/" + key));
+
+            // Convert AWS SDK v2 HeadObjectResponse to AWS SDK v1 ObjectMetadata for interface
+            // compatibility
+            ObjectMetadata metadata = new ObjectMetadata();
+            metadata.setContentLength(headResponse.contentLength());
+            metadata.setContentType(headResponse.contentType());
+            // Note: ObjectMetadata in AWS SDK v1 doesn't have setETag() method - ETag is read-only
+            if (headResponse.lastModified() != null) {
+                metadata.setLastModified(java.util.Date.from(headResponse.lastModified()));
+            }
+
+            // Copy user metadata if present
+            if (headResponse.metadata() != null) {
+                headResponse.metadata().forEach(metadata::addUserMetadata);
+            }
+
+            return metadata;
+
+        } catch (Exception e) {
+            throw new IOException("Failed to get object metadata for key " + key, e);
+        }
     }
 
     /**
-     * Minimal implementation of WriteOperationHelperCallbacks for Hadoop 3.4.2 compatibility. This
-     * implementation throws UnsupportedOperationException for all callback methods.
+     * Full implementation of WriteOperationHelperCallbacks for Hadoop 3.4.2 compatibility. This
+     * implementation uses the S3AFileSystem's internal S3 client to perform actual S3 operations.
      */
-    private static final class MinimalWriteOperationHelperCallbacks
+    private final class S3AccessHelperCallbacks
             implements WriteOperationHelper.WriteOperationHelperCallbacks {
 
+        private final S3Client s3Client;
+
+        public S3AccessHelperCallbacks() {
+            // Extract the S3 client from S3AFileSystem using reflection if needed
+            // For now, we'll use a direct approach - WriteOperationHelper will call these methods
+            // when it needs to perform S3 operations
+            this.s3Client = getS3ClientFromFileSystem();
+        }
+
+        @Override
         public software.amazon.awssdk.services.s3.model.UploadPartResponse uploadPart(
                 software.amazon.awssdk.services.s3.model.UploadPartRequest request,
                 RequestBody body,
                 DurationTrackerFactory durationTrackerFactory) {
-            throw new UnsupportedOperationException("Callback uploadPart not implemented");
+            // Perform the actual S3 uploadPart operation
+            return s3Client.uploadPart(request, body);
         }
 
+        @Override
         public software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse
                 completeMultipartUpload(
                         software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest
                                 request) {
-            throw new UnsupportedOperationException(
-                    "Callback completeMultipartUpload not implemented");
+            // Perform the actual S3 completeMultipartUpload operation
+            return s3Client.completeMultipartUpload(request);
         }
 
         @Override
         public void finishedWrite(String key, long length, PutObjectOptions putObjectOptions) {
-            // Minimal implementation - do nothing
+            // Callback for post-write operations - can be used for metrics, cleanup, etc.
+            // For now, we'll leave this empty as it's optional
+        }
+
+        /**
+         * Get the S3 client from the S3AFileSystem. In Hadoop 3.4.2, the S3AFileSystem uses an
+         * internal S3 client that we can access.
+         */
+        private S3Client getS3ClientFromFileSystem() {
+            try {
+                // Use reflection to access the internal S3 client from S3AFileSystem
+                java.lang.reflect.Field s3Field = s3a.getClass().getDeclaredField("s3");
+                s3Field.setAccessible(true);
+                return (S3Client) s3Field.get(s3a);
+            } catch (Exception e) {
+                // If reflection fails, try alternative field names
+                try {
+                    java.lang.reflect.Field s3ClientField =
+                            s3a.getClass().getDeclaredField("s3Client");
+                    s3ClientField.setAccessible(true);
+                    return (S3Client) s3ClientField.get(s3a);
+                } catch (Exception e2) {
+                    // If all reflection attempts fail, throw a descriptive error
+                    throw new RuntimeException(
+                            "Failed to access S3 client from S3AFileSystem. "
+                                    + "This may be due to changes in Hadoop's internal structure.",
+                            e2);
+                }
+            }
         }
     }
 
