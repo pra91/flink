@@ -82,9 +82,6 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
                         s3a.getActiveAuditSpan(),
                         createCallbacks());
         this.s3a = s3a;
-
-        // Track instance for resource leak detection
-        instanceCount.incrementAndGet();
     }
 
     /**
@@ -698,8 +695,6 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
 
         // Clear the cached client reference (but don't close it - it belongs to S3AFileSystem)
         cachedS3Client = null;
-
-        instanceCount.decrementAndGet();
     }
 
     /**
@@ -709,31 +704,6 @@ public class HadoopS3AccessHelper implements S3AccessHelper, AutoCloseable {
      */
     public boolean isClosed() {
         return closed;
-    }
-
-    /**
-     * Static reference counter for debugging resource leaks in development/testing. Note: This
-     * should only be used for debugging purposes.
-     */
-    private static final java.util.concurrent.atomic.AtomicInteger instanceCount =
-            new java.util.concurrent.atomic.AtomicInteger(0);
-
-    static {
-        // Add shutdown hook to report any unclosed instances
-        Runtime.getRuntime()
-                .addShutdownHook(
-                        new Thread(
-                                () -> {
-                                    int remaining = instanceCount.get();
-                                    if (remaining > 0) {
-                                        System.err.println(
-                                                "Warning: "
-                                                        + remaining
-                                                        + " HadoopS3AccessHelper instance(s) "
-                                                        + "may not have been closed properly. Please ensure close() is called "
-                                                        + "explicitly to avoid resource leaks.");
-                                    }
-                                }));
     }
 
     /**
