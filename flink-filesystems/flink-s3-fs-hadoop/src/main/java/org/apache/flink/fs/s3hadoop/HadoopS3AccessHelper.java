@@ -19,29 +19,29 @@
 package org.apache.flink.fs.s3hadoop;
 
 import org.apache.flink.fs.s3.common.writer.S3AccessHelper;
-import org.apache.flink.util.MathUtils;
 
-import com.amazonaws.SdkBaseException;
 import com.amazonaws.services.s3.model.CompleteMultipartUploadResult;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PartETag;
-import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.PutObjectResult;
-import com.amazonaws.services.s3.model.UploadPartRequest;
 import com.amazonaws.services.s3.model.UploadPartResult;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.s3a.S3AFileSystem;
-import org.apache.hadoop.fs.s3a.S3AUtils;
 import org.apache.hadoop.fs.s3a.WriteOperationHelper;
+import org.apache.hadoop.fs.s3a.impl.PutObjectOptions;
+import org.apache.hadoop.fs.s3a.impl.write.WriteObjectFlags;
 import org.apache.hadoop.fs.s3a.statistics.S3AStatisticsContext;
+import org.apache.hadoop.fs.statistics.DurationTrackerFactory;
 import org.apache.hadoop.fs.store.audit.AuditSpan;
 import org.apache.hadoop.fs.store.audit.AuditSpanSource;
+import software.amazon.awssdk.core.sync.RequestBody;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -62,35 +62,39 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
                         checkNotNull(conf),
                         s3a.createStoreContext().getInstrumentation(),
                         s3a.getAuditSpanSource(),
-                        s3a.getActiveAuditSpan());
+                        s3a.getActiveAuditSpan(),
+                        new MinimalWriteOperationHelperCallbacks());
         this.s3a = s3a;
     }
 
     @Override
     public String startMultiPartUpload(String key) throws IOException {
-        return s3accessHelper.initiateMultiPartUpload(key);
+        // Create minimal PutObjectOptions for Hadoop 3.4.2 compatibility
+        PutObjectOptions putOptions =
+                new PutObjectOptions(
+                        false, // multipartUpload
+                        null, // storageClass
+                        Collections.emptyMap(), // headers
+                        EnumSet.noneOf(WriteObjectFlags.class), // flags
+                        null // customUserAgent
+                        );
+        return s3accessHelper.initiateMultiPartUpload(key, putOptions);
     }
 
     @Override
     public UploadPartResult uploadPart(
             String key, String uploadId, int partNumber, File inputFile, long length)
             throws IOException {
-        final UploadPartRequest uploadRequest =
-                s3accessHelper.newUploadPartRequest(
-                        key,
-                        uploadId,
-                        partNumber,
-                        MathUtils.checkedDownCast(length),
-                        null,
-                        inputFile,
-                        0L);
-        return s3accessHelper.uploadPart(uploadRequest);
+        // TODO: Implement Hadoop 3.4.2 uploadPart with AWS SDK v2 types
+        throw new UnsupportedOperationException(
+                "uploadPart method needs implementation for Hadoop 3.4.2 API changes");
     }
 
     @Override
     public PutObjectResult putObject(String key, File inputFile) throws IOException {
-        final PutObjectRequest putRequest = s3accessHelper.createPutObjectRequest(key, inputFile);
-        return s3accessHelper.putObject(putRequest);
+        // TODO: Implement Hadoop 3.4.2 putObject with new signatures
+        throw new UnsupportedOperationException(
+                "putObject method needs implementation for Hadoop 3.4.2 API changes");
     }
 
     @Override
@@ -101,8 +105,9 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
             long length,
             AtomicInteger errorCount)
             throws IOException {
-        return s3accessHelper.completeMPUwithRetries(
-                destKey, uploadId, partETags, length, errorCount);
+        // TODO: Implement Hadoop 3.4.2 completeMPUwithRetries with CompletedPart conversion
+        throw new UnsupportedOperationException(
+                "commitMultiPartUpload method needs implementation for Hadoop 3.4.2 API changes");
     }
 
     @Override
@@ -140,10 +145,36 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
 
     @Override
     public ObjectMetadata getObjectMetadata(String key) throws IOException {
-        try {
-            return s3a.getObjectMetadata(new Path('/' + key));
-        } catch (SdkBaseException e) {
-            throw S3AUtils.translateException("getObjectMetadata", key, e);
+        // TODO: Implement Hadoop 3.4.2 getObjectMetadata with HeadObjectResponse conversion
+        throw new UnsupportedOperationException(
+                "getObjectMetadata method needs implementation for Hadoop 3.4.2 API changes");
+    }
+
+    /**
+     * Minimal implementation of WriteOperationHelperCallbacks for Hadoop 3.4.2 compatibility. This
+     * implementation throws UnsupportedOperationException for all callback methods.
+     */
+    private static final class MinimalWriteOperationHelperCallbacks
+            implements WriteOperationHelper.WriteOperationHelperCallbacks {
+
+        public software.amazon.awssdk.services.s3.model.UploadPartResponse uploadPart(
+                software.amazon.awssdk.services.s3.model.UploadPartRequest request,
+                RequestBody body,
+                DurationTrackerFactory durationTrackerFactory) {
+            throw new UnsupportedOperationException("Callback uploadPart not implemented");
+        }
+
+        public software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse
+                completeMultipartUpload(
+                        software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest
+                                request) {
+            throw new UnsupportedOperationException(
+                    "Callback completeMultipartUpload not implemented");
+        }
+
+        @Override
+        public void finishedWrite(String key, long length, PutObjectOptions putObjectOptions) {
+            // Minimal implementation - do nothing
         }
     }
 
@@ -158,8 +189,9 @@ public class HadoopS3AccessHelper implements S3AccessHelper {
                 Configuration conf,
                 S3AStatisticsContext statisticsContext,
                 AuditSpanSource auditSpanSource,
-                AuditSpan auditSpan) {
-            super(owner, conf, statisticsContext, auditSpanSource, auditSpan);
+                AuditSpan auditSpan,
+                WriteOperationHelperCallbacks callbacks) {
+            super(owner, conf, statisticsContext, auditSpanSource, auditSpan, callbacks);
         }
     }
 }
