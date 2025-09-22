@@ -21,18 +21,18 @@ package org.apache.flink.fs.s3hadoop;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.util.HadoopConfigLoader;
 
-import org.junit.jupiter.api.Test;
+import org.junit.Test;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
 
 /**
  * Unit tests for the S3 file system support via Hadoop's {@link
  * org.apache.hadoop.fs.s3a.S3AFileSystem}.
  */
-class HadoopS3FileSystemTest {
+public class HadoopS3FileSystemTest {
 
     @Test
-    void testShadingOfAwsCredProviderConfig() {
+    public void testShadingOfAwsCredProviderConfig() {
         final Configuration conf = new Configuration();
         conf.setString(
                 "fs.s3a.aws.credentials.provider",
@@ -42,8 +42,9 @@ class HadoopS3FileSystemTest {
         configLoader.setFlinkConfig(conf);
 
         org.apache.hadoop.conf.Configuration hadoopConfig = configLoader.getOrLoadHadoopConfig();
-        assertThat(hadoopConfig.get("fs.s3a.aws.credentials.provider"))
-                .isEqualTo("com.amazonaws.auth.ContainerCredentialsProvider");
+        assertEquals(
+                "com.amazonaws.auth.ContainerCredentialsProvider",
+                hadoopConfig.get("fs.s3a.aws.credentials.provider"));
     }
 
     // ------------------------------------------------------------------------
@@ -53,7 +54,7 @@ class HadoopS3FileSystemTest {
 
     /** Test forwarding of standard Hadoop-style credential keys. */
     @Test
-    void testConfigKeysForwardingHadoopStyle() {
+    public void testConfigKeysForwardingHadoopStyle() {
         Configuration conf = new Configuration();
         conf.setString("fs.s3a.access.key", "test_access_key");
         conf.setString("fs.s3a.secret.key", "test_secret_key");
@@ -63,7 +64,7 @@ class HadoopS3FileSystemTest {
 
     /** Test forwarding of shortened Hadoop-style credential keys. */
     @Test
-    void testConfigKeysForwardingShortHadoopStyle() {
+    public void testConfigKeysForwardingShortHadoopStyle() {
         Configuration conf = new Configuration();
         conf.setString("s3.access.key", "my_key_a");
         conf.setString("s3.secret.key", "my_key_b");
@@ -73,7 +74,7 @@ class HadoopS3FileSystemTest {
 
     /** Test forwarding of shortened Presto-style credential keys. */
     @Test
-    void testConfigKeysForwardingPrestoStyle() {
+    public void testConfigKeysForwardingPrestoStyle() {
         Configuration conf = new Configuration();
         conf.setString("s3.access-key", "clé d'accès");
         conf.setString("s3.secret-key", "clef secrète");
@@ -87,7 +88,7 @@ class HadoopS3FileSystemTest {
 
         org.apache.hadoop.conf.Configuration hadoopConf = configLoader.getOrLoadHadoopConfig();
 
-        assertThat(hadoopConf.get("fs.s3a.access.key", null)).isEqualTo(accessKey);
-        assertThat(hadoopConf.get("fs.s3a.secret.key", null)).isEqualTo(secretKey);
+        assertEquals(accessKey, hadoopConf.get("fs.s3a.access.key", null));
+        assertEquals(secretKey, hadoopConf.get("fs.s3a.secret.key", null));
     }
 }
