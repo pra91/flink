@@ -23,7 +23,7 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-filesystems</artifactId>
-		<version>2.2-SNAPSHOT</version>
+		<version>1.20-SNAPSHOT</version>
 	</parent>
 
 	<artifactId>flink-s3-fs-hadoop</artifactId>
@@ -32,10 +32,8 @@ under the License.
 	<packaging>jar</packaging>
 
 	<properties>
-		<surefire.module.config> <!--
-			S5CmdOnHadoopS3FileSystemITCase uses ArraysAsListSerializer indirectly
-			-->--add-opens=java.base/java.util=ALL-UNNAMED
-		</surefire.module.config>
+		<!-- S5CmdOnHadoopS3FileSystemITCase uses ArraysAsListSerializer indirectly -->
+		<surefire.module.config>--add-opens=java.base/java.util=ALL-UNNAMED</surefire.module.config>
 	</properties>
 
 	<dependencyManagement>
@@ -54,6 +52,11 @@ under the License.
 					<exclusion>
 						<groupId>org.slf4j</groupId>
 						<artifactId>slf4j-reload4j</artifactId>
+					</exclusion>
+					<!-- Exclude unshaded Netty to prevent conflicts with flink-shaded-netty -->
+					<exclusion>
+						<groupId>io.netty</groupId>
+						<artifactId>*</artifactId>
 					</exclusion>
 				</exclusions>
 			</dependency>

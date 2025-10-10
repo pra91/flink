@@ -25,7 +25,7 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>2.2-SNAPSHOT</version>
+		<version>1.20-SNAPSHOT</version>
 	</parent>
 
 	<artifactId>flink-runtime</artifactId>
@@ -50,18 +50,11 @@ under the License.
 			OperatorStateBackendTest
 			-->--add-opens=java.base/java.io=ALL-UNNAMED <!--
 			AsynchronousFileIOChannelTest
-			-->--add-opens=java.base/java.util.concurrent=ALL-UNNAMED <!--
-			-->-Djunit.platform.reflection.search.useLegacySemantics=true
+			-->--add-opens=java.base/java.util.concurrent=ALL-UNNAMED
 		</surefire.module.config>
 	</properties>
 
 	<dependencies>
-
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-datastream-api</artifactId>
-			<version>${project.version}</version>
-		</dependency>
 
 		<!-- core dependencies -->
 
@@ -94,9 +87,8 @@ under the License.
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-test-utils-connector</artifactId>
+			<artifactId>flink-java</artifactId>
 			<version>${project.version}</version>
-			<scope>test</scope>
 		</dependency>
 
 		<dependency>
@@ -137,6 +129,11 @@ under the License.
 					<groupId>org.slf4j</groupId>
 					<artifactId>slf4j-reload4j</artifactId>
 				</exclusion>
+				<!-- Exclude unshaded Netty to prevent conflicts with flink-shaded-netty -->
+				<exclusion>
+					<groupId>io.netty</groupId>
+					<artifactId>*</artifactId>
+				</exclusion>
 			</exclusions>
 		</dependency>
 
@@ -153,6 +150,11 @@ under the License.
 					<groupId>org.slf4j</groupId>
 					<artifactId>slf4j-reload4j</artifactId>
 				</exclusion>
+				<!-- Exclude unshaded Netty to prevent conflicts with flink-shaded-netty -->
+				<exclusion>
+					<groupId>io.netty</groupId>
+					<artifactId>*</artifactId>
+				</exclusion>
 			</exclusions>
 		</dependency>
 
@@ -168,6 +170,11 @@ under the License.
 				<exclusion>
 					<groupId>org.slf4j</groupId>
 					<artifactId>slf4j-reload4j</artifactId>
+				</exclusion>
+				<!-- Exclude unshaded Netty to prevent conflicts with flink-shaded-netty -->
+				<exclusion>
+					<groupId>io.netty</groupId>
+					<artifactId>*</artifactId>
 				</exclusion>
 			</exclusions>
 		</dependency>
@@ -199,12 +206,6 @@ under the License.
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-connector-datagen</artifactId>
-			<version>${project.version}</version>
 		</dependency>
 
 		<dependency>
@@ -314,8 +315,21 @@ under the License.
 		</dependency>
 
 		<dependency>
+			<!-- This must appear before powermock on the classpath! -->
 			<groupId>org.mockito</groupId>
-			<artifactId>mockito-subclass</artifactId>
+			<artifactId>mockito-inline</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.powermock</groupId>
+			<artifactId>powermock-module-junit4</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.powermock</groupId>
+			<artifactId>powermock-api-mockito2</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
